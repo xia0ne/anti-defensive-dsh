@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Local reference clone of the upstream skill repo (pinned commit lives in
+# packages/plugin/MANIFEST.json). Not vendored: it carries its own .git.
+reference/upstream-skill/
+
+# Generated copies (regenerate with `node scripts/sync-detector.mjs`)
+# NOTE: packages/plugin/lib/detector/ IS committed on purpose — the published
+# package must be self-contained, and `sync-detector.mjs --check` guards it.
+
+# OS / editor
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs and scratch output
+*.log
