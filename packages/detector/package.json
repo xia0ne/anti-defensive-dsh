@@ -1,0 +1,20 @@
+{
+  "name": "@adw/detector",
+  "version": "0.1.0",
+  "description": "Offline, dependency-free detector for defensive academic writing (CN/EN). One deep module: scan(text, options) -> Report.",
+  "type": "module",
+  "main": "lib/scan.js",
+  "exports": {
+    ".": "./lib/scan.js",
+    "./rules": "./lib/rules.js",
+    "./lexicons": "./lib/lexicons.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib"],
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": ["academic-writing", "defensive-writing", "linter", "chinese", "english"]
+}
