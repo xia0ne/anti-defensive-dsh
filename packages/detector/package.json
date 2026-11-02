@@ -10,7 +10,7 @@
     "./lexicons": "./lib/lexicons.js",
     "./package.json": "./package.json"
   },
-  "files": ["lib"],
+  "files": ["lib", "LICENSE"],
   "license": "MIT",
   "engines": { "node": ">=18" },
   "scripts": {
