@@ -1,0 +1,10 @@
+# dsh-anti-defensive-writing bundle patch.
+#
+# One host row: the package's main entry loads as a plain Cordis plugin. The
+# `dsh.client` declaration in package.json makes the web app load ./client.js
+# as the browser half. No model-facing tool is enabled by default: the plugin
+# registers a skill provider (always) and a slash command (always), and the
+# `adw_scan` tool only when `tools: true` is configured.
+- insert:
+    - id: anti-defensive-writing
+      name: dsh-anti-defensive-writing
