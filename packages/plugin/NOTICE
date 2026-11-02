@@ -1,0 +1,23 @@
+dsh-anti-defensive-writing
+Copyright (c) 2026
+
+This product contains content copied verbatim from the Anti-Defensive Writing
+skill repository:
+
+  Anti-Defensive Writing skill content
+  Copyright (c) 2026 Adkid-Zephyr
+  Source: https://github.com/Adkid-Zephyr/anti-defensive-writing-Skill
+  Pinned commit: 82d31402caa0db1790026824399044538483171b
+                (tag plugin-v1.0.0, 2026-10-07)
+  License: MIT (see LICENSE.upstream in this directory)
+
+Files copied verbatim:
+  skills/anti-defensive-writing/SKILL.md
+  skills/anti-defensive-writing-en/SKILL.md
+  prompts/精简版提示词.txt
+  prompts/quick-prompt-en.txt
+  LICENSE.upstream
+
+The surrounding plugin code (lib/) is original work, also released under MIT.
+Any future modification of a vendored file must be marked in its header and in
+MANIFEST.json.

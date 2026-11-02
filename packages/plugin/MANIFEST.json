@@ -1,0 +1,31 @@
+{
+  "upstream": "Adkid-Zephyr/anti-defensive-writing-Skill",
+  "commit": "82d31402caa0db1790026824399044538483171b",
+  "tag": "plugin-v1.0.0",
+  "retrieved": "2026-11-02",
+  "license": "MIT",
+  "note": "Files are copied verbatim. LICENSE.upstream carries the upstream MIT text.",
+  "files": [
+    {
+      "path": "skills/anti-defensive-writing/SKILL.md",
+      "upstreamPath": "skills/anti-defensive-writing/SKILL.md",
+      "sha256": "6f072e66f6adf813bc1b4291754f2bc07ed4e65a398359844e97bfa215a1c28e"
+    },
+    {
+      "path": "skills/anti-defensive-writing-en/SKILL.md",
+      "upstreamPath": "skills/anti-defensive-writing-en/SKILL.md",
+      "sha256": "49705a92677d06b1be9f78be5be4f966b1d30c4ed72a3b97c86a973d06683b9b"
+    },
+    {
+      "path": "prompts/精简版提示词.txt",
+      "upstreamPath": "prompts/精简版提示词.txt",
+      "sha256": "8a52d3a5d5def26d22acf9024ab31169f74cc4d944e1b6a7c6280c3886a01e86"
+    },
+    {
+      "path": "prompts/quick-prompt-en.txt",
+      "upstreamPath": "prompts/quick-prompt-en.txt",
+      "sha256": "e771ee6efe1cfdf83ada543963cbe5f0c485f43781d6354d5c6c3dfaacbff16a"
+    }
+  ],
+  "licenseSha256": "fdf440e5214588d9edcdc1ec315cddbd8525fe509242c24989a8472d283325f4"
+}
