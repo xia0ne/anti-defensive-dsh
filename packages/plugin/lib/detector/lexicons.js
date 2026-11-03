@@ -1,11 +1,11 @@
 /**
  * Lexicon data for the anti-defensive-writing detector.
  *
- * These lists are DATA, not rules: they are the editable surface exposed by the
- * settings panel and the raw material the rule matchers compile into patterns.
- * Keeping them separate means a user can extend a lexicon without touching the
- * matching/suppression logic, and a translator can review the word lists in one
- * place.
+ * These lists are the single source of truth for what each rule matches: the
+ * rules import them directly, so editing a word here is all it takes to change
+ * behaviour. That matters because the settings page tells users the word lists
+ * are the editable surface — keeping a second copy inside `rules.js` silently
+ * broke that promise.
  *
  * Upstream source: skills/anti-defensive-writing{,-en}/SKILL.md
  * ("禁用自我削弱式表达" / "Banned self-weakening phrases").
@@ -13,13 +13,12 @@
  * @module @adw/detector/lexicons
  */
 
-/** Simplified-Chinese lexicon. Traditional forms are covered by the matchers. */
+/** Simplified-Chinese lexicon */
 export const CN = Object.freeze({
   /** Self-weakening hedges the skill bans outright. */
   selfWeakening: Object.freeze([
     '遗憾的是',
     '可惜的是',
-    '遗憾的是',
     '很遗憾',
     '仍明显落后',
     '明显落后',
@@ -61,7 +60,7 @@ export const CN = Object.freeze({
     '明显下降',
   ]),
 
-  /** Local phenomena escalated into a verdict on the whole method. */
+  /** A single failed condition written up as a general defect. */
   overgeneralizedLimitation: Object.freeze([
     '无法处理',
     '完全不适用',
@@ -73,7 +72,7 @@ export const CN = Object.freeze({
     '不具备泛化能力',
   ]),
 
-  /** Process narration ("we first did X, then Y") instead of standing logic. */
+  /** Process narration (“we first … then … finally”) in narrative sections. */
   proceduralNarration: Object.freeze([
     '我们首先',
     '我们随后',
@@ -88,9 +87,12 @@ export const CN = Object.freeze({
     '后来我们',
     '一开始我们',
     '我们最初',
+    '然后尝试',
+    '最后选择',
+    '最后决定',
   ]),
 
-  /** A sudden self-negation, especially at the end of a conclusion. */
+  /** Limitations and second thoughts placed before the contribution lands. */
   prematureSelfNegation: Object.freeze([
     '尽管如此',
     '必须承认',
@@ -102,9 +104,32 @@ export const CN = Object.freeze({
     '本研究仍存在',
     '本文仍存在',
     '尚需进一步研究',
+    '因此应谨慎',
+    '应谨慎理解',
+    '谨慎解读',
+    '不宜过度解读',
   ]),
 
-  /** Claims wider than the evidence — the overclaiming guard. */
+  /** Preamble phrases that only set up a self-weakening sentence. */
+  defensivePreamble: Object.freeze([
+    '需要指出的是',
+    '值得一提的是',
+    '客观地说',
+    '平心而论',
+    '在此需要说明',
+    '需要说明的是',
+  ]),
+
+  /** Apologetic register that adds no information. */
+  apology: Object.freeze([
+    '抱歉',
+    '笔者才疏学浅',
+    '恐有疏漏',
+    '难免有疏漏',
+    '难免存在错误',
+  ]),
+
+  /** Claims whose comparison scope outruns the evidence. */
   comparisonScopeCreep: Object.freeze([
     '在所有数据集上',
     '在所有指标上',
@@ -115,28 +140,11 @@ export const CN = Object.freeze({
     '均优于所有',
   ]),
 
-  /** Apologetic register that invites the reviewer to attack. */
-  apology: Object.freeze([
-    '抱歉',
-    '笔者才疏学浅',
-    '恐有疏漏',
-    '难免有疏漏',
-    '难免存在错误',
-  ]),
-
-  /** Throat-clearing preambles that precede a weakness. */
-  defensivePreamble: Object.freeze([
-    '需要指出的是',
-    '值得一提的是',
-    '客观地说',
-    '平心而论',
-    '在此需要说明',
-    '需要说明的是',
-  ]),
 })
 
 /** English lexicon. Matched case-insensitively. */
 export const EN = Object.freeze({
+  /** Self-weakening hedges the skill bans outright. */
   selfWeakening: Object.freeze([
     'unfortunately',
     'regrettably',
@@ -152,8 +160,12 @@ export const EN = Object.freeze({
     'still lags far behind',
     'far behind',
     'merely',
+    'only achieves',
+    'only improves',
+    'only reaches',
   ]),
 
+  /** Phrases that state the paper lost a contest it did not have to enter. */
   lossFraming: Object.freeze([
     'our method is weaker',
     'is weaker than',
@@ -170,6 +182,7 @@ export const EN = Object.freeze({
     'lower than the baseline',
   ]),
 
+  /** A single failed condition written up as a general defect. */
   overgeneralizedLimitation: Object.freeze([
     'cannot handle',
     'fails completely',
@@ -179,6 +192,7 @@ export const EN = Object.freeze({
     'is unable to handle',
   ]),
 
+  /** Process narration (“we first … then … finally”) in narrative sections. */
   proceduralNarration: Object.freeze([
     'we first',
     'we then',
@@ -192,6 +206,7 @@ export const EN = Object.freeze({
     'at first, we',
   ]),
 
+  /** Limitations and second thoughts placed before the contribution lands. */
   prematureSelfNegation: Object.freeze([
     'nevertheless',
     'admittedly',
@@ -202,8 +217,26 @@ export const EN = Object.freeze({
     'this work has limitations',
     'our approach has limitations',
     'future work should address',
+    'should be interpreted with caution',
   ]),
 
+  /** Preamble phrases that only set up a self-weakening sentence. */
+  defensivePreamble: Object.freeze([
+    'it is worth noting that',
+    'it should be noted that',
+    'needless to say',
+    'it is important to acknowledge',
+    'we would like to point out',
+  ]),
+
+  /** Apologetic register that adds no information. */
+  apology: Object.freeze([
+    'we apologize',
+    'we regret',
+    'we are sorry',
+  ]),
+
+  /** Claims whose comparison scope outruns the evidence. */
   comparisonScopeCreep: Object.freeze([
     'on all datasets',
     'across all metrics',
@@ -214,17 +247,4 @@ export const EN = Object.freeze({
     'universally better',
   ]),
 
-  apology: Object.freeze([
-    'we apologize',
-    'we regret',
-    'we are sorry',
-  ]),
-
-  defensivePreamble: Object.freeze([
-    'it is worth noting that',
-    'it should be noted that',
-    'needless to say',
-    'it is important to acknowledge',
-    'we would like to point out',
-  ]),
 })

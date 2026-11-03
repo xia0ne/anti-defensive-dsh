@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { scan, RULES, scoreOf } from '../lib/scan.js'
+import { scan, RULES, scoreOf, CN, EN } from '../lib/scan.js'
 
 /** Convenience: the rule ids that fired, in document order. */
 const fired = (report) => report.hits.map((hit) => hit.ruleId)
@@ -78,6 +78,68 @@ test('section auto-detection from markdown headings', () => {
   assert.equal(abstractHit?.section, 'abstract')
   const procedural = report.hits.find((hit) => hit.ruleId === 'procedural-narration')
   assert.equal(procedural, undefined, 'procedural narration should be suppressed under Experiments')
+})
+
+test('Chinese, numbered and CJK-ordinal headings are recognised', () => {
+  const cases = [
+    ['# 摘要\n遗憾的是本文效果有限。', 'abstract'],
+    ['# 结论\n尽管如此，方法仍有效。', 'conclusion'],
+    ['## 1. 引言\n遗憾的是本文效果有限。', 'introduction'],
+    ['## 4.2 Experiments\nWe first tune it.', 'experiments'],
+    ['### 第 3 节 方法\n我们首先做事。', 'method'],
+    ['## （二）相关工作\n本文弱于基线。', 'related-work'],
+    ['# 5 Conclusion\nNevertheless, it works.', 'conclusion'],
+    ['# Limitations\nOur approach has limitations.', 'limitations'],
+  ]
+  for (const [text, expected] of cases) {
+    const report = scan(text)
+    assert.deepEqual(report.coverage.sectionsSeen, [expected], `${JSON.stringify(text.split('\n')[0])} -> ${expected}`)
+  }
+})
+
+test('section numbering and CJK ordinals are stripped before matching', () => {
+  // 没有编号时也走同一条路径：编号前缀不能破坏标题识别，也不能误伤普通正文。
+  const plain = scan('# 摘要\n遗憾的是效果有限。')
+  const numbered = scan('# 一、摘要\n遗憾的是效果有限。')
+  assert.deepEqual(plain.coverage.sectionsSeen, ['abstract'])
+  assert.deepEqual(numbered.coverage.sectionsSeen, ['abstract'])
+  assert.deepEqual(scan('# 总结与展望\n效果有限。').coverage.sectionsSeen, ['conclusion'])
+  assert.deepEqual(scan('# 结论与展望\n效果有限。').coverage.sectionsSeen, ['conclusion'])
+  // A longer word that merely starts with a section word is not a heading.
+  assert.deepEqual(scan('# 方法论研究\n效果有限。').coverage.sectionsSeen, [])
+  assert.deepEqual(scan('# Abstract thinking is hard.\n效果有限。').coverage.sectionsSeen, [])
+})
+
+test('minSeverity only filters the list; it never changes the score', () => {
+  const text = '遗憾的是效果有限。需要指出的是，实验设置与基线一致。'
+  const all = scan(text, { section: 'abstract' })
+  const highOnly = scan(text, { section: 'abstract', minSeverity: 'high' })
+  assert.equal(highOnly.score, all.score, 'filtering the list must not raise the score')
+  assert.equal(highOnly.defensiveDensity, all.defensiveDensity)
+  assert.equal(highOnly.stats.hits, all.stats.hits)
+  assert.equal(highOnly.stats.hidden, all.stats.hits - highOnly.hits.length)
+  assert.ok(highOnly.hits.every((hit) => hit.severity === 'high'))
+  assert.equal(all.stats.hidden, 0)
+})
+
+test('rules and lexicons stay one source of truth', () => {
+  // The settings page tells users the word lists are editable. A second copy
+  // inside rules.js silently broke that promise, so assert identity.
+  for (const rule of RULES) {
+    const key = {
+      'self-weakening-hedge': 'selfWeakening',
+      'loss-framing': 'lossFraming',
+      'overgeneralized-limitation': 'overgeneralizedLimitation',
+      'procedural-narration': 'proceduralNarration',
+      'premature-self-negation': 'prematureSelfNegation',
+      'defensive-preamble': 'defensivePreamble',
+      'apology': 'apology',
+      'comparison-scope-creep': 'comparisonScopeCreep',
+    }[rule.id]
+    assert.ok(key, `unmapped rule ${rule.id}`)
+    assert.equal(rule.phrases.zh, CN[key], `${rule.id} zh must reference CN.${key}`)
+    assert.equal(rule.phrases.en, EN[key], `${rule.id} en must reference EN.${key}`)
+  }
 })
 
 test('CJK offsets are UTF-16 code-unit offsets and line/column are 1-based', () => {
@@ -222,6 +284,46 @@ test('overlapping phrases of one rule do not double count', () => {
   const hits = report.hits.filter((hit) => hit.ruleId === 'self-weakening-hedge')
   assert.equal(hits.length, 1)
   assert.equal(hits[0].phrase, '仍明显落后')
+})
+
+test('a heading inside a code fence is sample text, not a section', () => {
+  const text = '# 摘要\n内容。\n```\n# 结论\n```\n\n遗憾的是效果有限。'
+  const report = scan(text)
+  assert.deepEqual(report.coverage.sectionsSeen, ['abstract'])
+  assert.ok(report.hits.every((hit) => hit.section === 'abstract'))
+})
+
+test('every documented counter-example stays silent in every narrative section', () => {
+  // The settings page shows these to users as "this will not be flagged", and
+  // the usage doc repeats the promise. Assert the promise mechanically instead
+  // of trusting the word lists: a phrase match alone is not a hit.
+  const narrativeSections = [
+    'unknown', 'abstract', 'introduction', 'related-work', 'method',
+    'experiments', 'results', 'discussion', 'conclusion', 'rebuttal',
+  ]
+  const offenders = []
+  for (const rule of RULES) {
+    for (const example of rule.negativeExamples) {
+      for (const section of narrativeSections) {
+        const report = scan(example, { section })
+        const hit = report.hits.find((item) => item.ruleId === rule.id)
+        if (hit) offenders.push(`${rule.id} @ ${section}: ${hit.text} in ${JSON.stringify(example)}`)
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `counter-examples must not fire:\n${offenders.join('\n')}`)
+})
+
+test('masking stays linear on code-heavy papers', () => {
+  // The old masker rebuilt the whole string per match (O(n^2)). A 560k-char
+  // ML paper with 20k inline spans took 4.7 s; the command has no input cap.
+  const unit = 'text `code` more $x_i$ end. '
+  const text = unit.repeat(20000)
+  const started = performance.now()
+  const report = scan(text)
+  const elapsed = performance.now() - started
+  assert.equal(report.stats.hits, 0)
+  assert.ok(elapsed < 1500, `masking took ${Math.round(elapsed)}ms; expected well under the old quadratic cost`)
 })
 
 test('report shape is stable', () => {

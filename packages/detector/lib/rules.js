@@ -17,6 +17,9 @@
  * @module @adw/detector/rules
  */
 
+/** The word lists live in one place; rules only attach judgement to them. */
+import { CN, EN } from './lexicons.js'
+
 /** Severity → score weight. Only these three values are valid. */
 export const SEVERITY_WEIGHT = Object.freeze({ high: 3, medium: 2, low: 1 })
 
@@ -60,20 +63,13 @@ function sections(overrides = {}) {
   return Object.freeze({ ...DEFAULT_SECTIONS, ...overrides })
 }
 
-/**
- * Phrases that must NOT fire even though a bare scan would hit them.
- * Encoded as guards next to the rule because they are rule-specific.
+/*
+ * Context guards (scoping uses of 仅/only, a foreign subject for loss framing,
+ * a correction statement for apology, …) live in `scan.js#isLegitimateUsage`
+ * because they read the text around the match, which rules must not own. The
+ * removed `GUARDS` export here was never read by the matcher, so editing it
+ * changed nothing.
  */
-export const GUARDS = Object.freeze({
-  /** `仅当` / `仅限于` / `仅在…时` scope a claim; they are not self-weakening. */
-  cnOnlyScoping: /^仅(?:当|限|于|在|用|对|需|能|可|供|凭|按|就|次)/,
-  /** `不仅` is additive, never a hedge. */
-  cnNotOnly: /^不仅/,
-  /** `only if` / `only when` scope a condition. */
-  enOnlyScoping: /^only (?:if|when|in|for|under|at|after|before|once)\b/i,
-  /** `not only` is additive. */
-  enNotOnly: /^not only\b/i,
-})
 
 /**
  * The rule catalogue.
@@ -95,49 +91,7 @@ export const RULES = Object.freeze([
     rationale:
       '删掉削弱词，或把程度副词换成可核验的具体数字；主张强度由证据决定，而不是由形容词自贬。',
     sections: sections({ abstract: 1.3, conclusion: 1.3, experiments: 0.4 }),
-    phrases: {
-      zh: [
-        '遗憾的是',
-        '可惜的是',
-        '很遗憾',
-        '仍明显落后',
-        '明显落后',
-        '效果有限',
-        '提升有限',
-        '改善有限',
-        '存在严重不足',
-        '严重不足',
-        '明显不足',
-        '明显欠缺',
-        '尚不完善',
-        '尚不成熟',
-        '不够理想',
-        '不尽如人意',
-        '难以令人满意',
-        '有待提高',
-        '有待改进',
-        '表现欠佳',
-        '表现不佳',
-        '仅',
-        '仅仅',
-      ],
-      en: [
-        'unfortunately',
-        'regrettably',
-        'limited improvement',
-        'marginal improvement',
-        'only marginal',
-        'limited gains',
-        'modest improvement',
-        'severely insufficient',
-        'serious shortcomings',
-        'still lags far behind',
-        'merely',
-        'only achieves',
-        'only improves',
-        'only reaches',
-      ],
-    },
+    phrases: { zh: CN.selfWeakening, en: EN.selfWeakening },
     /** Minimal deletion: a hedge is removable without changing the claim. */
     suggest: (hit) => ({
       kind: 'rewrite',
@@ -165,39 +119,7 @@ export const RULES = Object.freeze([
     rationale:
       '按上游决策顺序处理：先判断该结果是否必须讨论，再从目标差异、约束条件或合理权衡解释，或收缩主张避免正面对撞。',
     sections: sections({ abstract: 1.4, conclusion: 1.3, limitations: 0.05 }),
-    phrases: {
-      zh: [
-        '本文弱于',
-        '本方法弱于',
-        '弱于',
-        '劣于',
-        '未能超过',
-        '未能达到',
-        '未能优于',
-        '性能下降',
-        '性能退化',
-        '性能劣化',
-        '准确率下降',
-        '下降明显',
-        '明显下降',
-        '不如',
-      ],
-      en: [
-        'our method is weaker',
-        'is weaker than',
-        'inferior to',
-        'falls short of',
-        'fails to surpass',
-        'fails to outperform',
-        'fails to beat',
-        'performance drops',
-        'performance degrades',
-        'performance decreases',
-        'underperforms',
-        'worse than the baseline',
-        'lower than the baseline',
-      ],
-    },
+    phrases: { zh: CN.lossFraming, en: EN.lossFraming },
     suggest: (hit) => ({
       kind: 'question',
       note: '这个比较是否必须出现在当前章节？能否换成目标差异、约束条件或权衡的表述，或收缩主张避免正面对撞？',
@@ -221,26 +143,7 @@ export const RULES = Object.freeze([
     rationale:
       '限定条件与范围：写明“在 X 条件下无法处理 Y”，把结论收回到证据覆盖的边界内。',
     sections: sections({ abstract: 1.4, conclusion: 1.3, limitations: 0.1 }),
-    phrases: {
-      zh: [
-        '无法处理',
-        '完全不适用',
-        '普遍不适用',
-        '方法失效',
-        '完全失效',
-        '不能胜任',
-        '无法胜任',
-        '不具备泛化能力',
-      ],
-      en: [
-        'cannot handle',
-        'fails completely',
-        'does not work at all',
-        'is not applicable in general',
-        'our method cannot',
-        'is unable to handle',
-      ],
-    },
+    phrases: { zh: CN.overgeneralizedLimitation, en: EN.overgeneralizedLimitation },
     suggest: (hit) => ({
       kind: 'question',
       note: '该结论的证据覆盖哪些条件？请把断言收缩到这些条件内，或补充实验证明它确实是普遍的。',
@@ -270,37 +173,7 @@ export const RULES = Object.freeze([
       results: 0.1,
       conclusion: 0.9,
     }),
-    phrases: {
-      zh: [
-        '我们首先',
-        '我们随后',
-        '我们接着',
-        '然后我们',
-        '最后我们',
-        '起初我们',
-        '最初我们',
-        '我们尝试了',
-        '我们曾尝试',
-        '经过多次尝试',
-        '后来我们',
-        '一开始我们',
-        '我们最初',
-        '然后尝试',
-        '最后选择',
-        '最后决定',
-      ],
-      en: [
-        'we first',
-        'we then',
-        'we next',
-        'we initially',
-        'we attempted',
-        'after several attempts',
-        'we later',
-        'finally, we',
-        'at first, we',
-      ],
-    },
+    phrases: { zh: CN.proceduralNarration, en: EN.proceduralNarration },
     suggest: (hit) => ({
       kind: 'question',
       note: '这段是否在讲“我们做了什么过程”？把它改写成该段要支撑的论点，或移到方法章节。',
@@ -330,35 +203,7 @@ export const RULES = Object.freeze([
       limitations: 0.05,
       experiments: 0.3,
     }),
-    phrases: {
-      zh: [
-        '尽管如此',
-        '必须承认',
-        '不得不承认',
-        '本研究的局限',
-        '本文的局限',
-        '存在局限',
-        '不足之处在于',
-        '本研究仍存在',
-        '本文仍存在',
-        '尚需进一步研究',
-        '因此应谨慎',
-        '应谨慎理解',
-        '谨慎解读',
-        '不宜过度解读',
-      ],
-      en: [
-        'nevertheless',
-        'admittedly',
-        'it must be admitted',
-        'a major limitation',
-        'the main limitation',
-        'this work has limitations',
-        'our approach has limitations',
-        'future work should address',
-        'should be interpreted with caution',
-      ],
-    },
+    phrases: { zh: CN.prematureSelfNegation, en: EN.prematureSelfNegation },
     suggest: (hit) => ({
       kind: 'rewrite',
       text: '',
@@ -381,23 +226,7 @@ export const RULES = Object.freeze([
       '“需要指出的是”“值得一提的是”“客观地说”常被用来给一个自我削弱句做铺垫，删掉不影响信息量。',
     rationale: '删除铺垫语，直接陈述事实。',
     sections: sections({ abstract: 0.8, conclusion: 0.8 }),
-    phrases: {
-      zh: [
-        '需要指出的是',
-        '值得一提的是',
-        '客观地说',
-        '平心而论',
-        '在此需要说明',
-        '需要说明的是',
-      ],
-      en: [
-        'it is worth noting that',
-        'it should be noted that',
-        'needless to say',
-        'it is important to acknowledge',
-        'we would like to point out',
-      ],
-    },
+    phrases: { zh: CN.defensivePreamble, en: EN.defensivePreamble },
     suggest: (hit) => ({ kind: 'rewrite', text: '', note: '删除铺垫语，直接陈述事实。' }),
     negativeExamples: [
       'Note that the scheduler is deterministic by construction.',
@@ -415,10 +244,7 @@ export const RULES = Object.freeze([
     description: '致歉式措辞把论文放在被审判的位置，且不提供任何信息。',
     rationale: '删除致歉句；如确有错误，直接说明更正内容。',
     sections: sections({ rebuttal: 0.6 }),
-    phrases: {
-      zh: ['抱歉', '笔者才疏学浅', '恐有疏漏', '难免有疏漏', '难免存在错误'],
-      en: ['we apologize', 'we regret', 'we are sorry'],
-    },
+    phrases: { zh: CN.apology, en: EN.apology },
     suggest: (hit) => ({ kind: 'rewrite', text: '', note: '删除致歉语，直接说明事实或更正。' }),
     negativeExamples: [
       'We regret that the earlier version contained a typo in Table 2; it is corrected here.',
@@ -437,26 +263,7 @@ export const RULES = Object.freeze([
     rationale:
       '只提出证据能牢固支撑的主张；说服力来自主张与证据高度一致，而不是比较项目最多。',
     sections: sections({ abstract: 1.2, conclusion: 1.2 }),
-    phrases: {
-      zh: [
-        '在所有数据集上',
-        '在所有指标上',
-        '全面领先',
-        '全面超越',
-        '全面优于',
-        '所有实验中均',
-        '均优于所有',
-      ],
-      en: [
-        'on all datasets',
-        'across all metrics',
-        'consistently superior',
-        'outperforms all',
-        'outperforms every',
-        'state-of-the-art on all',
-        'universally better',
-      ],
-    },
+    phrases: { zh: CN.comparisonScopeCreep, en: EN.comparisonScopeCreep },
     suggest: (hit) => ({
       kind: 'question',
       note: '这句话的证据覆盖所有数据集/指标吗？请把范围收缩到实际评测过的集合。',
