@@ -19,6 +19,8 @@
  * @module dsh-anti-defensive-writing/skill-provider
  */
 
+import { fileURLToPath } from 'node:url'
+
 import { BUNDLED_SKILL_RANK } from './compat.js'
 
 /** Provider name shown in `skill` results. */
@@ -72,7 +74,10 @@ export function buildSkillProvider({ readAsset, asset, language = 'zh' }) {
       invocation: { modelInvocable: true, userInvocable: true },
       provider: PROVIDER_NAME,
       source: 'bundled',
-      resourceBase: { kind: 'directory', path: asset(`${skill.dir}/`).pathname },
+      // `URL.pathname` is percent-encoded; a workspace under a path with a
+      // space (`~/My Papers/…`) produced `My%20Papers`, a directory that does
+      // not exist, so the model-facing "base directory" was wrong.
+      resourceBase: { kind: 'directory', path: fileURLToPath(asset(`${skill.dir}/`)) },
       rank: BUNDLED_SKILL_RANK,
       locator: skill.file,
     })

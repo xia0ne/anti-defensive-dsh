@@ -11,6 +11,7 @@ import {
   viewSchema,
   stateSchema,
   PROJECTION_KEY,
+  STATE_VERSION,
 } from '../lib/projection.js'
 import { scan } from '../lib/detector.js'
 
@@ -56,6 +57,24 @@ test('skill provider returns verbatim upstream Markdown as content', async () =>
   assert.equal(await provider.get({ name: 'nope' }), undefined)
 })
 
+test('skill resourceBase points at a real directory, even under an encoded path', async () => {
+  const provider = buildSkillProvider({
+    readAsset,
+    // A workspace like `~/My Papers/` arrives percent-encoded in a file URL.
+    asset: (rel) => new URL(`../${rel}`, 'file:///tmp/My%20Papers/plugin/'),
+  })
+  for (const candidate of await provider.list()) {
+    // URL.pathname would leave `My%20Papers` in the path; fileURLToPath decodes it.
+    assert.ok(!candidate.resourceBase.path.includes('%20'), candidate.resourceBase.path)
+    assert.ok(candidate.resourceBase.path.endsWith(`skills/${candidate.name}/`))
+  }
+  const tool = buildScanTool((definition) => definition, {
+    config: { minSeverity: 'low', disabledRules: [] },
+    readFileText: async () => '',
+  })
+  assert.equal(tool.name, 'adw_scan')
+})
+
 test('skill provider honours the preferred language ordering', async () => {
   const provider = buildSkillProvider({
     readAsset,
@@ -85,9 +104,12 @@ test('parseAdwInput handles verbs, flags and positional arguments', () => {
   assert.deepEqual(parseAdwInput('  '), { verb: '', positional: [], flags: {} })
 })
 
-test('parseAdwInput rejects unknown flags and bad severities', () => {
+test('parseAdwInput rejects unknown flags and bad values', () => {
   assert.throws(() => parseAdwInput('scan a.md --bogus'), /未知参数/)
   assert.throws(() => parseAdwInput('scan a.md --min-severity urgent'), /high \| medium \| low/)
+  assert.throws(() => parseAdwInput('scan a.md --section'), /--section 需要一个值/)
+  assert.throws(() => parseAdwInput('scan a.md --section nope'), /--section 只能是/)
+  assert.throws(() => parseAdwInput('scan a.md --min-severity'), /--min-severity 需要一个值/)
 })
 
 test('renderReport is readable and marks question-kind hits differently', () => {
@@ -195,21 +217,23 @@ test('projection records a rewrite pair when a tool result follows a user messag
     data: { content: [{ type: 'text', text: '遗憾的是效果有限，本文弱于基线。' }] },
   })
   const before = state.pendingBefore.score
+  // Real event shape: the Agent pairs `message.source.callId` with the tool's
+  // `presentationMeta` under `data.meta`; there is no `meta.value.result`.
   state = applyEvent(state, {
     type: 'tool/result',
     seq: 2,
     time: 200,
     data: {
-      source: { callId: 'call-1' },
+      message: { role: 'tool', source: { kind: 'tool', callId: 'call-1' } },
       meta: {
-        value: {
-          result: {
-            ok: true,
-            score: 96,
-            defensiveDensity: 0.1,
-            stats: { chars: 20, sentences: 3, hits: 0, high: 0, medium: 0, low: 0, suppressed: 0 },
-            byRule: [],
-          },
+        adwScan: {
+          ok: true,
+          score: 96,
+          defensiveDensity: 0.1,
+          stats: { chars: 20, sentences: 3, hits: 0, high: 0, medium: 0, low: 0, suppressed: 0, hidden: 0 },
+          byRule: [],
+          hits: [],
+          truncated: false,
         },
       },
     },
@@ -219,6 +243,57 @@ test('projection records a rewrite pair when a tool result follows a user messag
   assert.equal(state.pairs[0].before, before)
   assert.equal(state.pairs[0].after, 96)
   assert.equal(state.pendingBefore, null)
+})
+
+test('projection folds a real adw_scan tool result through presentationMeta', async () => {
+  // End-to-end over the actual tool: build the tool, execute it, and feed the
+  // exact event an Agent records (message.source.callId + data.meta). An
+  // earlier fold read `meta.value.result`, a shape the host never produces, so
+  // every model-driven scan was invisible to the dashboard.
+  const defineTool = (definition) => definition
+  const tool = buildScanTool(defineTool, {
+    config: { minSeverity: 'low', disabledRules: [] },
+    readFileText: async () => '',
+  })
+  const value = await tool.execute({ text: '遗憾的是效果有限。', section: 'abstract' }, {})
+  assert.equal(value.ok, true)
+  const meta = tool.output.presentationMeta({}, value)
+  assert.deepEqual(meta, { adwScan: value })
+
+  const projection = buildWritingHealthProjection()
+  let state = projection.init()
+  state = applyEvent(state, {
+    type: 'tool/result',
+    seq: 5,
+    time: 500,
+    data: {
+      turn: 1,
+      step: 1,
+      message: { role: 'tool', source: { kind: 'tool', callId: 'call-9' }, content: [] },
+      meta,
+    },
+  })
+  assert.equal(state.scans, 1)
+  assert.equal(state.last.score, value.score)
+  assert.equal(state.last.source, 'tool')
+  assert.equal(state.recent.length, value.hits.length)
+  assert.equal(state.recent[0].ruleId, 'self-weakening-hedge')
+})
+
+test('projection ignores tool results from other tools', () => {
+  const projection = buildWritingHealthProjection()
+  let state = projection.init()
+  const before = state
+  state = applyEvent(state, {
+    type: 'tool/result',
+    seq: 6,
+    time: 600,
+    data: {
+      message: { role: 'tool', source: { kind: 'tool', callId: 'call-10' }, content: [] },
+      meta: { cwd: '/tmp' },
+    },
+  })
+  assert.equal(state, before, 'an unrelated tool result must return the same reference')
 })
 
 test('projection view is plain JSON and passes the view schema', () => {
@@ -235,7 +310,7 @@ test('projection view is plain JSON and passes the view schema', () => {
   assert.doesNotThrow(() => stateSchema.parse(state))
   const serialized = JSON.stringify(view)
   assert.ok(!serialized.includes('undefined'))
-  assert.equal(view.version, 2)
+  assert.equal(view.version, STATE_VERSION)
   assert.ok(Array.isArray(view.trend))
   assert.ok(Array.isArray(view.byRule))
   assert.ok(view.summary.averageScore <= 100)
@@ -269,5 +344,5 @@ test('projection key and version are stable', () => {
   const projection = buildWritingHealthProjection()
   assert.equal(projection.key, PROJECTION_KEY)
   assert.equal(PROJECTION_KEY, 'adwWriting')
-  assert.equal(projection.stateVersion, 2)
+  assert.equal(projection.stateVersion, STATE_VERSION)
 })

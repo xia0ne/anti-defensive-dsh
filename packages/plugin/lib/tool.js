@@ -37,13 +37,26 @@ export function parameterSpec() {
     },
     section: {
       type: 'string',
+      enum: [
+        'abstract',
+        'introduction',
+        'related-work',
+        'method',
+        'experiments',
+        'results',
+        'discussion',
+        'conclusion',
+        'limitations',
+        'rebuttal',
+      ],
       description:
-        'Paper section for scoring context: abstract | introduction | related-work | method | experiments | results | discussion | conclusion | limitations | rebuttal. ' +
-        'Omit to auto-detect from Markdown headings.',
+        'Paper section for scoring context. Omit to auto-detect from Markdown headings (Chinese and numbered headings included).',
     },
     minSeverity: {
       type: 'string',
-      description: 'Only report hits at or above this severity: high | medium | low. Default low.',
+      enum: ['high', 'medium', 'low'],
+      description:
+        'List only hits at or above this severity. Defaults to the plugin config (low). Filters the list only; the score always reflects every hit.',
     },
   }
 }
@@ -68,7 +81,7 @@ export function parameterJsonSchema(spec = parameterSpec()) {
  * caller passes in `defineTool` so this module stays host-free.
  *
  * @param {(definition: object) => object} defineTool - the host's defineTool.
- * @param {{ readFileText: (path: string) => Promise<string>, config: object }} deps
+ * @param {{ readFileText: (path: string, exec?: object) => Promise<string>, config: object }} deps
  */
 export function buildScanTool(defineTool, deps) {
   return defineTool({
@@ -89,6 +102,10 @@ export function buildScanTool(defineTool, deps) {
             : `adw_scan failed: ${value.error ?? 'unknown error'}`,
         },
       ],
+      // The dashboard folds tool results from this metadata. Without it the
+      // `tool/result` event carries no canonical value, so every model-driven
+      // scan would be invisible to the panel.
+      presentationMeta: (_args, value) => ({ adwScan: value }),
     },
     async execute(args, exec) {
       exec.signal?.throwIfAborted?.()
@@ -97,7 +114,7 @@ export function buildScanTool(defineTool, deps) {
         if (typeof args.text === 'string' && args.text.trim() !== '') {
           text = args.text
         } else if (typeof args.path === 'string' && args.path.trim() !== '') {
-          text = await deps.readFileText(args.path)
+          text = await deps.readFileText(args.path, { agent: exec.agent, signal: exec.signal })
         } else {
           return { ok: false, error: 'provide either `text` or `path`' }
         }
@@ -135,6 +152,7 @@ export function toToolValue(report) {
       medium: report.stats.medium,
       low: report.stats.low,
       suppressed: report.stats.suppressed,
+      hidden: report.stats.hidden ?? 0,
     },
     byRule: report.byRule.map((row) => ({ ruleId: row.ruleId, count: row.count })),
     hits: report.hits.slice(0, MAX_HITS).map((hit) => ({
@@ -180,7 +198,7 @@ export function renderToolReport(value) {
  * same shape, so the fallback is not a degraded tool.
  *
  * @param {object} ctx
- * @param {{ readFileText: (path: string) => Promise<string>, config: object }} deps
+ * @param {{ readFileText: (path: string, exec?: object) => Promise<string>, config: object }} deps
  * @returns {Promise<boolean>} whether the tool was registered.
  */
 export async function registerScanTool(ctx, deps) {
@@ -214,7 +232,7 @@ export async function registerScanTool(ctx, deps) {
  * subset (type/oneOf/properties/required/additionalProperties/items/enum/const
  * plus annotations). Keeping the two builders adjacent makes drift visible.
  *
- * @param {{ readFileText: (path: string) => Promise<string>, config: object }} deps
+ * @param {{ readFileText: (path: string, exec?: object) => Promise<string>, config: object }} deps
  */
 export function buildRawToolDefinition(deps) {
   const defined = buildScanTool((definition) => definition, deps)
@@ -232,9 +250,16 @@ export function buildRawToolDefinition(deps) {
  * The `adw_scan` output shape, written once in the defineTool value-schema DSL
  * (inline `required: true`). `dslToJsonSchema` converts it for the fallback
  * path, so the two forms cannot drift.
+ *
+ * `oneOf` of two closed objects is deliberate: a single object with every
+ * report field required makes the `{ ok: false, error }` branch unrepresentable,
+ * and the registry rejects such a value at the boundary — the tool then fails
+ * with `INVALID_TOOL_OUTPUT` instead of returning its own message. Each branch
+ * keeps the other branch's fields as optional so `additionalProperties: false`
+ * does not double-count a stray field as a oneOf match.
  */
 export function outputSchemaSpec() {
-  return {
+  const report = {
     type: 'object',
     additionalProperties: false,
     properties: {
@@ -254,6 +279,7 @@ export function outputSchemaSpec() {
           medium: { type: 'number', required: true },
           low: { type: 'number', required: true },
           suppressed: { type: 'number', required: true },
+          hidden: { type: 'number', required: true },
         },
       },
       byRule: {
@@ -289,6 +315,15 @@ export function outputSchemaSpec() {
       truncated: { type: 'boolean', required: true },
     },
   }
+  const failure = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      ok: { type: 'boolean', required: true },
+      error: { type: 'string', required: true },
+    },
+  }
+  return { oneOf: [report, failure] }
 }
 
 /**

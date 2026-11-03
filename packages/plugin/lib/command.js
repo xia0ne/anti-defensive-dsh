@@ -27,9 +27,24 @@ const USAGE = [
   '  /adw on | off',
 ].join('\n')
 
+/** Sections accepted by `--section`, mirrored from the detector's vocabulary. */
+export const SECTIONS = Object.freeze([
+  'abstract',
+  'introduction',
+  'related-work',
+  'method',
+  'experiments',
+  'results',
+  'discussion',
+  'conclusion',
+  'limitations',
+  'rebuttal',
+])
+
 /**
  * Parse `rawInput` into a verb plus arguments. Unknown flags are rejected with
- * a specific message rather than silently ignored.
+ * a specific message rather than silently ignored, and a flag with no value is
+ * an error instead of `undefined` reaching the scanner.
  * @param {string} raw
  */
 export function parseAdwInput(raw) {
@@ -40,16 +55,22 @@ export function parseAdwInput(raw) {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
     if (token === '--section') {
-      flags.section = tokens[++i]
+      const value = tokens[++i]
+      if (value === undefined || value.startsWith('--')) throw new Error('--section 需要一个值')
+      flags.section = value
     } else if (token === '--min-severity') {
-      flags.minSeverity = tokens[++i]
+      const value = tokens[++i]
+      if (value === undefined || value.startsWith('--')) throw new Error('--min-severity 需要一个值')
+      flags.minSeverity = value
     } else if (token.startsWith('--')) {
       throw new Error(`未知参数：${token}`)
     } else {
       positional.push(token)
     }
   }
-  if (flags.section !== undefined && flags.section === '') throw new Error('--section 需要一个值')
+  if (flags.section !== undefined && !SECTIONS.includes(flags.section)) {
+    throw new Error(`--section 只能是 ${SECTIONS.join(' | ')}`)
+  }
   if (flags.minSeverity !== undefined && !['high', 'medium', 'low'].includes(flags.minSeverity)) {
     throw new Error('--min-severity 只能是 high | medium | low')
   }
@@ -61,16 +82,21 @@ export function parseAdwInput(raw) {
  * shows the full detail; the command is for a quick look and for logs.
  * @param {object} report
  * @param {string} [label]
+ * @param {string} [section] - the section that was forced, when one was.
  */
-export function renderReport(report, label) {
+export function renderReport(report, label, section) {
   const lines = []
-  lines.push(label === undefined ? '反防御性写作扫描' : `反防御性写作扫描：${label}`)
+  const scope = section === undefined ? '' : `（按 ${section} 计分）`
+  lines.push(label === undefined ? '反防御性写作扫描' : `反防御性写作扫描：${label}${scope}`)
   lines.push(`写作健康度 ${report.score}/100 · 命中 ${report.stats.hits} 处（高 ${report.stats.high} / 中 ${report.stats.medium} / 低 ${report.stats.low}）· 防御密度 ${report.defensiveDensity}/句`)
   if (report.stats.suppressed > 0) {
     lines.push(`（另有 ${report.stats.suppressed} 处因章节语境被忽略）`)
   }
+  if (report.stats.hidden > 0) {
+    lines.push(`（列表已按严重度隐藏 ${report.stats.hidden} 处低级别命中；分数仍按全部命中计算）`)
+  }
   if (report.hits.length === 0) {
-    lines.push('未发现防御性写作信号。')
+    lines.push(report.stats.hits === 0 ? '未发现防御性写作信号。' : '当前严重度阈值下没有可显示的命中。')
     return lines.join('\n')
   }
   lines.push('')
@@ -79,7 +105,7 @@ export function renderReport(report, label) {
     lines.push(`${tag} L${hit.line}:${hit.column} [${hit.ruleId}] 「${hit.text}」`)
     lines.push(`   ${hit.suggestion.note}`)
   }
-  if (report.hits.length > 20) lines.push(`… 还有 ${report.hits.length - 20} 处，见面板或 /api/adw/report`)
+  if (report.hits.length > 20) lines.push(`… 还有 ${report.hits.length - 20} 处。完整列表可用 adw_scan 或面板查看。`)
   if (report.truncated) lines.push('（结果已截断；完整统计见 report.stats）')
   return lines.join('\n')
 }
@@ -114,8 +140,14 @@ export function renderRules(ruleId) {
 
 /**
  * Register the command on a context that has `commands`.
+ *
+ * `/adw on|off` flips the standing prompt reminder for this process. The
+ * section's text is a thunk, so the change takes effect on the next assembled
+ * prompt without a restart; before this, the command printed a success message
+ * and changed nothing.
+ *
  * @param {object} ctx
- * @param {{ scanFile: (path: string) => Promise<object>, config: object }} deps
+ * @param {{ scanFile: (path: string, exec?: object) => Promise<object>, config: object, promptGate?: { enabled: boolean } }} deps
  */
 export function registerAdwCommand(ctx, deps) {
   const commands = ctx.get('commands')
@@ -124,7 +156,7 @@ export function registerAdwCommand(ctx, deps) {
     name: 'adw',
     description: '反防御性写作：扫描文件、查看规则、开关纪律提示',
     input: { hint: 'scan <path> | rules | version | on | off' },
-    async handler({ rawInput, signal }) {
+    async handler({ rawInput, signal, agent }) {
       try {
         const { verb, positional, flags } = parseAdwInput(rawInput)
         signal?.throwIfAborted?.()
@@ -132,8 +164,8 @@ export function registerAdwCommand(ctx, deps) {
           case 'scan': {
             if (positional.length === 0) return { kind: 'error', text: '缺少路径。\n' + USAGE }
             const path = positional[0]
-            const report = await deps.scanFile(path)
-            return { kind: 'success', text: renderReport(report, path) }
+            const report = await deps.scanFile(path, { agent, signal, section: flags.section, minSeverity: flags.minSeverity })
+            return { kind: 'success', text: renderReport(report, path, flags.section) }
           }
           case 'rules':
             return { kind: 'success', text: renderRules(positional[0]) }
@@ -143,13 +175,22 @@ export function registerAdwCommand(ctx, deps) {
               text: `dsh-anti-defensive-writing · detector v${DETECTOR_VERSION} · ${RULES.length} 条规则`,
             }
           case 'on':
-          case 'off':
+          case 'off': {
+            const gate = deps.promptGate
+            if (gate === undefined) {
+              return {
+                kind: 'error',
+                text: '当前 host 没有提供纪律提示开关（插件以 injectPrompt: false 运行）。',
+              }
+            }
+            gate.enabled = verb === 'on'
             return {
               kind: 'success',
               text: verb === 'on'
-                ? '反防御性写作提示已开启（需重启会话生效）。'
-                : '反防御性写作提示已关闭（需重启会话生效）。',
+                ? '反防御性写作提示已开启，下一次模型请求生效。'
+                : '反防御性写作提示已关闭，下一次模型请求生效（skill、扫描工具和面板不受影响）。',
             }
+          }
           case '':
             return { kind: 'error', text: USAGE }
           default:

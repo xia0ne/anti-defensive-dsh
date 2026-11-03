@@ -68,16 +68,34 @@ test('dslToJsonSchema lifts inline required into a sibling array', () => {
   assert.equal(json.type, 'object')
 })
 
-test('the output spec declares every returned field as required', () => {
+test('the output spec is a two-branch oneOf: report success or a structured failure', () => {
   const spec = outputSchemaSpec()
+  assert.equal(spec.oneOf.length, 2)
+  const [report, failure] = spec.oneOf
   assert.deepEqual(
-    Object.keys(spec.properties).sort(),
+    Object.keys(report.properties).sort(),
     ['byRule', 'defensiveDensity', 'error', 'hits', 'ok', 'score', 'stats', 'truncated'],
   )
   for (const key of ['ok', 'score', 'defensiveDensity', 'stats', 'byRule', 'hits', 'truncated']) {
-    assert.equal(spec.properties[key].required, true, `${key} must be required`)
+    assert.equal(report.properties[key].required, true, `${key} must be required`)
   }
-  assert.equal(spec.properties.error.required, undefined, 'error is only present on failure')
+  assert.equal(report.properties.error.required, undefined, 'error is only present on failure')
+  assert.deepEqual(Object.keys(failure.properties).sort(), ['error', 'ok'])
+  assert.equal(failure.properties.error.required, true)
+  assert.ok('error' in report.properties, 'the success branch tolerates error for the render fallback')
+})
+
+test('the two output branches are structurally disjoint', () => {
+  const spec = dslToJsonSchema(outputSchemaSpec())
+  const report = spec.oneOf[0]
+  const failure = spec.oneOf[1]
+  // The success branch never requires `error`; the failure branch requires
+  // exactly `ok` + `error` and nothing else.
+  assert.ok(!report.required.includes('error'))
+  assert.deepEqual(failure.required.sort(), ['error', 'ok'])
+  assert.deepEqual(Object.keys(failure.properties).sort(), ['error', 'ok'])
+  assert.equal(failure.additionalProperties, false)
+  assert.equal(report.additionalProperties, false)
 })
 
 test('registerScanTool falls back to the raw definition when dsh-tools is absent', async () => {

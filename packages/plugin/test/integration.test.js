@@ -60,6 +60,19 @@ function fakeHost(services) {
   return { ctx, calls }
 }
 
+test('Config is a native Schemastery schema when the host provides one', () => {
+  // A bare StandardSchema object validates fine but is reported by the profile
+  // inspector as `unsupported`, which removes the plugin's settings card.
+  // Under plain Node the native library is absent, so this asserts the
+  // portable fallback's shape; the profile probe covers the native path.
+  assert.ok(typeof Config['~standard'].validate === 'function')
+  assert.equal(Config['~standard'].version, 1)
+  const out = Config['~standard'].validate({ minSeverity: 'high', tools: false })
+  assert.equal(out.value.minSeverity, 'high')
+  assert.equal(out.value.tools, false)
+  assert.equal(out.value.enabled, true, 'defaults are filled')
+})
+
 test('plugin identity and config defaults are stable', () => {
   assert.equal(name, 'anti-defensive-writing')
   assert.equal(DEFAULT_CONFIG.enabled, true)
@@ -78,7 +91,23 @@ test('Config accepts defaults, coerces nothing, and reports issues', () => {
   assert.equal(bad.value, undefined)
 })
 
-test('a fully composed host gets every registration', async () => {
+test('/adw on and off flip the live prompt gate instead of claiming a no-op restart', async () => {
+  const services = { commands: {}, systemPrompt: {} }
+  const { ctx, calls } = fakeHost(services)
+  apply(ctx, DEFAULT_CONFIG)
+  const command = calls.commands[0]
+  const section = calls.sections[0]
+  assert.equal(typeof section.text, 'function', 'prompt text must be a thunk so /adw off can take effect')
+  assert.ok(section.text().includes('发布会原则'))
+  const off = await command.handler({ rawInput: 'off', signal: undefined })
+  assert.equal(off.kind, 'success')
+  assert.equal(section.text(), '', 'off must empty the prompt section')
+  const on = await command.handler({ rawInput: 'on', signal: undefined })
+  assert.equal(on.kind, 'success')
+  assert.ok(section.text().includes('发布会原则'))
+})
+
+test('a composed host gets every registration', async () => {
   const services = {
     skills: {},
     commands: {},
@@ -139,30 +168,86 @@ test('injectPrompt:false and tools:false skip those layers only', () => {
 })
 
 test('/adw scan reads a real workspace file and returns a report', async () => {
-  // Pin the workspace root to this package so the test is independent of the
-  // caller's cwd (`pnpm verify` runs from the repo root, the test runner from
-  // the package directory).
-  const packageRoot = new URL('..', import.meta.url).pathname
-  const services = {
-    commands: {},
-    skills: {},
-    workingDirectory: { ensure: async () => packageRoot },
-  }
+  // A temp workspace pins the root independently of the caller's cwd
+  // (`pnpm verify` runs from the repo root, the test runner from the package).
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const root = await mkdtemp(join(tmpdir(), 'adw-command-'))
+  await writeFile(join(root, 'paper.md'), '遗憾的是效果有限。需要指出的是，实验一致。')
+
+  const services = { commands: {}, skills: {}, workingDirectory: { ensure: async () => root } }
   const { ctx, calls } = fakeHost(services)
   apply(ctx, DEFAULT_CONFIG)
   const command = calls.commands[0]
 
-  const ok = await command.handler({ rawInput: 'scan package.json', signal: undefined })
+  // A real command invocation always carries the live Agent; the workspace
+  // root comes from its Session, not from the host process cwd.
+  const agent = { session: { header: { cwd: root } } }
+  const ok = await command.handler({ rawInput: 'scan paper.md', signal: undefined, agent })
   assert.equal(ok.kind, 'success')
   assert.match(ok.text, /写作健康度/)
 
-  const missing = await command.handler({ rawInput: 'scan does-not-exist.md', signal: undefined })
+  const missing = await command.handler({ rawInput: 'scan does-not-exist.md', signal: undefined, agent })
   assert.equal(missing.kind, 'error')
   assert.match(missing.text, /file not found/)
 
-  const escape = await command.handler({ rawInput: 'scan ../../etc/passwd', signal: undefined })
+  const escape = await command.handler({ rawInput: 'scan ../../etc/passwd', signal: undefined, agent })
   assert.equal(escape.kind, 'error')
   assert.match(escape.text, /outside the workspace/)
+
+  // Flags reach the scanner instead of being parsed and dropped.
+  const forced = await command.handler({ rawInput: 'scan paper.md --section abstract --min-severity high', signal: undefined, agent })
+  assert.equal(forced.kind, 'success')
+  assert.match(forced.text, /按 abstract 计分/)
+  const hidden = await command.handler({ rawInput: 'scan paper.md --min-severity high', signal: undefined, agent })
+  assert.match(hidden.text, /隐藏 1 处/)
+  // Filtering the list must not move the score; forcing a section legitimately
+  // does, because the section multiplier is part of the metric.
+  assert.equal((hidden.text.match(/写作健康度 (\d+)/) ?? [])[1], (ok.text.match(/写作健康度 (\d+)/) ?? [])[1], 'the score must not move with the display filter')
+})
+
+test('readWorkspaceFile uses the live Agent working directory, not the process cwd', async () => {
+  const { readWorkspaceFile } = await import('../lib/index.js')
+  const { mkdtemp, writeFile, mkdir } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const root = await mkdtemp(join(tmpdir(), 'adw-workspace-'))
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await writeFile(join(root, 'paper.md'), '遗憾的是效果有限。需要指出的是，实验一致。')
+  await writeFile(join(root, 'docs', 'paper.md'), '遗憾的是效果有限。需要指出的是，实验一致。')
+  await mkdir(join(root, 'sub'))
+  await writeFile(join(root, 'sub', 'nested.md'), '效果有限。')
+
+  const calls = []
+  const ctx = {
+    get: (name) => (name === 'workingDirectory'
+      ? { ensure: async (agent, signal) => { calls.push([agent, signal]); return agent.session.header.cwd } }
+      : undefined),
+  }
+  const agent = { session: { header: { cwd: root } } }
+  const signal = new AbortController().signal
+
+  const text = await readWorkspaceFile('paper.md', ctx, { agent, signal })
+  assert.match(text, /^遗憾的是效果有限。/)
+  assert.equal(calls.length, 1, 'the service must be asked once, with the Agent')
+  assert.equal(calls[0][0], agent, 'ensure() takes the Agent, not the Cordis context')
+
+  // Nested relative path resolves inside the session directory.
+  assert.equal(await readWorkspaceFile('sub/nested.md', ctx, { agent }), '效果有限。')
+
+  // Traversal still refused when a real service supplies the root.
+  await assert.rejects(() => readWorkspaceFile('../../etc/passwd', ctx, { agent }), /outside the workspace/)
+
+  // A symlink inside the workspace must not read outside it: the lexical
+  // check alone cannot see where the link points.
+  const { symlink } = await import('node:fs/promises')
+  const outside = await mkdtemp(join(tmpdir(), 'adw-outside-'))
+  await writeFile(join(outside, 'secret.txt'), 'TOP SECRET')
+  await symlink(join(outside, 'secret.txt'), join(root, 'link.txt'))
+  await assert.rejects(() => readWorkspaceFile('link.txt', ctx, { agent }), /outside the workspace/)
+  // Without an Agent (editor/CI), fall back to cwd instead of throwing.
+  assert.equal((await readWorkspaceFile('packages/plugin/package.json', ctx)).length > 0, true)
 })
 
 test('the projection folds real scan output into a client-visible view', async () => {

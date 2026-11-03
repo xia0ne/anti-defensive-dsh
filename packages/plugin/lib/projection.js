@@ -25,8 +25,15 @@ import { scan, RULES } from './detector.js'
 
 /** Projection key, stable across versions. */
 export const PROJECTION_KEY = 'adwWriting'
-/** Schema version; bump on any state or fold change. */
-export const STATE_VERSION = 2
+/**
+ * Schema version; bump on any state or fold change.
+ *
+ * 3: the tool/result fold now reads `meta.adwScan` (the tool's presentation
+ * metadata) instead of the `meta.value.result` shape the host never produced.
+ * Version 2 checkpoints held no tool scans at all, so a stale row would look
+ * valid while reporting an empty dashboard; the bump discards them.
+ */
+export const STATE_VERSION = 3
 
 /** Bounds. A session with 500 turns must not grow this projection. */
 const MAX_TURNS = 60
@@ -172,27 +179,30 @@ function addRuleTotals(totals, byRule) {
 }
 
 /**
- * Parse an `adw_scan` tool result. The canonical value is the tool's declared
- * output; the session records rendered content, so both shapes are accepted.
+ * Parse an `adw_scan` tool result.
+ *
+ * The authoritative value is the tool's `presentationMeta` output, which the
+ * host stores as `data.meta` on the `tool/result` event. It is the only place
+ * the canonical tool value survives: `data.message.content` holds the rendered
+ * text, not the structured report. `meta.adwScan` is the discriminator — other
+ * tools carry unrelated metadata (`cwd`, `path`, `diffs`), and an earlier build
+ * looked for a `meta.value.result` shape the host never produced, so model
+ * scans were silently invisible to the dashboard.
+ *
  * @returns {object|null}
  */
 function reportFromToolResult(event) {
   const data = event?.data
   if (typeof data !== 'object' || data === null) return null
-  const source = data.source
+  const source = data.message?.source
   if (typeof source !== 'object' || source === null) return null
   if (typeof source.callId !== 'string') return null
   const meta = data.meta
   if (typeof meta !== 'object' || meta === null) return null
-  // Tool presentation metadata carries the canonical value when the host
-  // provides it; otherwise the rendered content is not parsable and the fold
-  // falls back to the assistant-message scan.
-  const value = meta.value
-  if (typeof value !== 'object' || value === null) return null
-  const result = value.result
-  if (typeof result !== 'object' || result === null || result.ok !== true) return null
-  if (typeof result.score !== 'number' || typeof result.stats !== 'object') return null
-  return result
+  const value = meta.adwScan
+  if (typeof value !== 'object' || value === null || value.ok !== true) return null
+  if (typeof value.score !== 'number' || typeof value.stats !== 'object' || value.stats === null) return null
+  return value
 }
 
 /**
@@ -268,17 +278,13 @@ export function applyEvent(state, event, deps = { scan }) {
     if (typeof data !== 'object' || data === null) return state
     if (data.kind !== 'success' || typeof data.text !== 'string') return state
     // Command output is free text; only the `adw scan` shape carries a score.
-    const match = /写作健康度 (\d+)\/100 · 命中 (\d+) 处（高 (\d+) \/ 中 (\d+) \/ 低 (\d+)）/.exec(data.text)
-    if (match === null) return state
+    const parsed = pointFromCommandText(data.text)
+    if (parsed === null) return state
     const point = {
       seq: event.seq,
       at: typeof event.time === 'number' ? event.time : 0,
       turn: turnOf(event) ?? state.turn,
-      score: Number(match[1]),
-      hits: Number(match[2]),
-      high: Number(match[3]),
-      medium: Number(match[4]),
-      low: Number(match[5]),
+      ...parsed,
       chars: 0,
       source: 'command',
     }
@@ -341,6 +347,17 @@ function boundedScan(scanFn, text) {
   if (text.length <= MAX_SCAN_CHARS) return scanFn(text, { maxHits: MAX_HITS })
   const half = Math.floor(MAX_SCAN_CHARS / 2)
   return scanFn(text.slice(0, half) + '\n' + text.slice(text.length - half), { maxHits: MAX_HITS })
+}
+
+/**
+ * Record one `/adw scan` result. The command renders only the head of the hit
+ * list, but its score covers every hit and its `stats.hidden` says how many the
+ * display filter removed; the point takes the score and the full counts from
+ * the report text so a filtered scan is never recorded as a cleaner one.
+ */
+function pointFromCommandText(text) {
+  const match = /写作健康度 (\d+)\/100 · 命中 (\d+) 处（高 (\d+) \/ 中 (\d+) \/ 低 (\d+)）/.exec(text)
+  return match === null ? null : { score: Number(match[1]), hits: Number(match[2]), high: Number(match[3]), medium: Number(match[4]), low: Number(match[5]) }
 }
 
 /**

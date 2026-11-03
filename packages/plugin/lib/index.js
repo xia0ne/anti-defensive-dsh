@@ -16,11 +16,12 @@
  * @module dsh-anti-defensive-writing
  */
 
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 
 import { scan, RULES, DETECTOR_VERSION } from './detector.js'
+import { Config, DEFAULT_CONFIG } from './config.js'
 import { buildSkillProvider } from './skill-provider.js'
 import { registerAdwCommand } from './command.js'
 import { registerScanTool } from './tool.js'
@@ -34,62 +35,6 @@ export const name = 'anti-defensive-writing'
  * `ctx.inject`, so a host missing one layer still gets the others.
  */
 export const inject = []
-
-/** Defaults for every configuration key. */
-export const DEFAULT_CONFIG = Object.freeze({
-  enabled: true,
-  injectPrompt: true,
-  tools: true,
-  minSeverity: 'low',
-  disabledRules: [],
-  skillLanguage: 'zh',
-})
-
-const SEVERITIES = new Set(['high', 'medium', 'low'])
-const LANGUAGES = new Set(['zh', 'en'])
-
-/**
- * Configuration schema in the Standard Schema shape Cordis validates against
- * (`Config['~standard'].validate(value)`). Written by hand so the package has
- * no runtime dependency on a schema library.
- */
-export const Config = {
-  '~standard': {
-    version: 1,
-    vendor: 'dsh-anti-defensive-writing',
-    validate(value) {
-      const issues = []
-      const input = value === undefined || value === null ? {} : value
-      if (typeof input !== 'object' || Array.isArray(input)) {
-        return { issues: [{ message: 'config must be an object', path: [] }] }
-      }
-      const out = { ...DEFAULT_CONFIG }
-      const bool = (key) => {
-        if (input[key] === undefined) return
-        if (typeof input[key] !== 'boolean') issues.push({ message: `${key} must be a boolean`, path: [key] })
-        else out[key] = input[key]
-      }
-      bool('enabled')
-      bool('injectPrompt')
-      bool('tools')
-      if (input.minSeverity !== undefined) {
-        if (!SEVERITIES.has(input.minSeverity)) issues.push({ message: 'minSeverity must be high|medium|low', path: ['minSeverity'] })
-        else out.minSeverity = input.minSeverity
-      }
-      if (input.skillLanguage !== undefined) {
-        if (!LANGUAGES.has(input.skillLanguage)) issues.push({ message: 'skillLanguage must be zh|en', path: ['skillLanguage'] })
-        else out.skillLanguage = input.skillLanguage
-      }
-      if (input.disabledRules !== undefined) {
-        if (!Array.isArray(input.disabledRules) || input.disabledRules.some((item) => typeof item !== 'string')) {
-          issues.push({ message: 'disabledRules must be a string array', path: ['disabledRules'] })
-        } else out.disabledRules = [...input.disabledRules]
-      }
-      if (issues.length > 0) return { issues }
-      return { value: out }
-    },
-  },
-}
 
 /** Resolve a packaged asset path. */
 function asset(rel) {
@@ -126,6 +71,10 @@ export function apply(ctx, config = DEFAULT_CONFIG) {
   const resolved = { ...DEFAULT_CONFIG, ...(config ?? {}) }
   if (!resolved.enabled) return
 
+  // Live switch shared by the prompt section (read on every assembly) and
+  // `/adw on|off` (the only writer). Per-process, like the plugin itself.
+  const promptGate = { enabled: true }
+
   // 1) Skill provider — the upstream capability itself.
   ctx.inject(['skills'], (scoped) => {
     const skills = scoped.get('skills')
@@ -144,8 +93,13 @@ export function apply(ctx, config = DEFAULT_CONFIG) {
   // 2) Slash command — human-facing, never becomes a model message.
   ctx.inject(['commands'], (scoped) => {
     registerAdwCommand(scoped, {
-      scanFile: async (path) => scan(await readWorkspaceFile(path, scoped), { minSeverity: resolved.minSeverity, disabledRules: resolved.disabledRules }),
+      scanFile: async (path, exec = {}) => scan(await readWorkspaceFile(path, scoped, exec), {
+        ...(exec.section === undefined ? {} : { section: exec.section }),
+        minSeverity: exec.minSeverity ?? resolved.minSeverity,
+        disabledRules: resolved.disabledRules,
+      }),
       config: resolved,
+      promptGate: resolved.injectPrompt ? promptGate : undefined,
     })
   })
 
@@ -155,7 +109,7 @@ export function apply(ctx, config = DEFAULT_CONFIG) {
       // Fire-and-forget by design: the tool layer is optional, and a host
       // without @deepseek-ai/dsh-tools must not stall the rest of the plugin.
       registerScanTool(scoped, {
-        readFileText: (path) => readWorkspaceFile(path, scoped),
+        readFileText: (path, exec) => readWorkspaceFile(path, scoped, exec),
         config: resolved,
       }).catch((error) => {
         scoped.logger?.warn?.(`dsh-anti-defensive-writing: adw_scan registration failed: ${error}`)
@@ -171,7 +125,9 @@ export function apply(ctx, config = DEFAULT_CONFIG) {
       systemPrompt.section({
         name: 'dsh-adw:writing-discipline',
         order: 10050,
-        text: PROMPT_SECTION,
+        // A thunk, not a string: `/adw off` flips `promptGate` and the next
+        // request sees it. An empty string is dropped by the prompt renderer.
+        text: () => (promptGate.enabled ? PROMPT_SECTION : ''),
         interpolate: false,
       })
     })
@@ -187,34 +143,70 @@ export function apply(ctx, config = DEFAULT_CONFIG) {
  * Read a file inside the session working directory. Relative paths resolve
  * against the workspace root; traversal outside it is refused. The command and
  * tool are conveniences, not a sandbox escape hatch.
+ *
+ * The containment check runs on the real path, not the lexical one: a symlink
+ * named `paper.md` inside the workspace can point anywhere, and checking the
+ * unresolved string would let it read `~/.ssh/id_rsa`. `require.resolve`-style
+ * lexical checks are a starting point, not a boundary.
+ *
+ * `workingDirectory.ensure(agent, signal)` takes the live Agent: it reads
+ * `agent.session` to resolve the committed directory. Calling it with no
+ * argument throws, so this helper takes the agent explicitly and only falls
+ * back to the process cwd when no agent exists (editor/CI use).
+ *
  * @param {string} path - user-supplied path.
- * @param {object} ctx - Cordis context.
+ * @param {object} ctx - Cordis context (used only for the optional service).
+ * @param {{ agent?: object, signal?: AbortSignal }} [exec] - caller context; `agent` is the
+ *   live Agent from a tool's `exec` or a command's invocation.
  */
-export async function readWorkspaceFile(path, ctx) {
+export async function readWorkspaceFile(path, ctx, exec = {}) {
   if (typeof path !== 'string' || path.trim() === '') throw new Error('path must be a non-empty string')
-  const root = await workingDirectoryOf(ctx)
+  const root = await workingDirectoryOf(ctx, exec)
   const absolute = isAbsolute(path) ? path : resolve(root, path)
-  const rel = relative(root, absolute)
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (!contains(root, absolute)) throw new Error(`refusing to read outside the workspace: ${path}`)
+  if (!existsSync(absolute)) throw new Error(`file not found: ${path}`)
+  // Resolve symlinks and re-check: the lexical test above cannot see them.
+  let realRoot
+  let realFile
+  try {
+    realRoot = await realpath(root)
+    realFile = await realpath(absolute)
+  } catch {
+    throw new Error(`file not found: ${path}`)
+  }
+  if (!contains(realRoot, realFile)) {
     throw new Error(`refusing to read outside the workspace: ${path}`)
   }
-  if (!existsSync(absolute)) throw new Error(`file not found: ${path}`)
-  return readFile(absolute, 'utf8')
+  return readFile(realFile, 'utf8')
+}
+
+/**
+ * Whether `child` is `root` or sits under it, comparing path segments (not
+ * string prefixes, so `/work-evil` is not inside `/work`).
+ */
+function contains(root, child) {
+  const rel = relative(root, child)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 /** Best-effort workspace root; falls back to the process cwd. */
-async function workingDirectoryOf(ctx) {
-  try {
-    const service = ctx.get?.('workingDirectory')
-    if (service && typeof service.ensure === 'function') {
-      const cwd = await service.ensure(undefined)
-      if (typeof cwd === 'string' && cwd !== '') return cwd
+async function workingDirectoryOf(ctx, exec = {}) {
+  const agent = exec.agent
+  if (agent !== undefined && agent !== null) {
+    try {
+      const service = ctx.get?.('workingDirectory')
+      if (service && typeof service.ensure === 'function') {
+        const cwd = await service.ensure(agent, exec.signal)
+        if (typeof cwd === 'string' && cwd !== '') return cwd
+      }
+      const fromSession = agent.session?.header?.cwd
+      if (typeof fromSession === 'string' && fromSession !== '') return fromSession
+    } catch {
+      // fall through to cwd
     }
-  } catch {
-    // fall through to cwd
   }
   return process.cwd()
 }
 
-/** Re-export the detector surface for host-side consumers and tests. */
-export { scan, RULES, DETECTOR_VERSION }
+/** Re-export the detector and config surfaces for host-side consumers and tests. */
+export { scan, RULES, DETECTOR_VERSION, Config, DEFAULT_CONFIG }

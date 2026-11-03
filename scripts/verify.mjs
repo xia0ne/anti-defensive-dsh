@@ -34,6 +34,7 @@ run('tool schema tests', NODE, ['--test', 'packages/plugin/test/tool-schema.test
 run('integration tests', NODE, ['--test', 'packages/plugin/test/integration.test.js'])
 run('package README exists', NODE, ['-e', "const {existsSync}=require('node:fs');if(!existsSync('packages/plugin/README.md'))throw new Error('missing README.md')"])
 run('real registry mount', NODE, ['--test', 'packages/plugin/test/real-registry.test.js'])
+run('real tool and command registry mount', NODE, ['--test', 'packages/plugin/test/real-tools.test.js'])
 run('vendored upstream intact', NODE, ['scripts/sync-upstream.mjs', '--check'])
 
 const dsh = process.env.DSH_BIN ?? '/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
