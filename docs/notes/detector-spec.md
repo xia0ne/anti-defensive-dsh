@@ -238,7 +238,7 @@ score = clamp(round(100 − 40 × defensiveDensity), 0, 100)
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `section` | 自动检测 | 强制章节 |
-| `minSeverity` | 无（全部） | `'high' \| 'medium' \| 'low'` |
+| `minSeverity` | 无（全部） | `'high' \| 'medium' \| 'low'`。**只过滤 `hits` 列表，不改变分数与统计**；被隐藏的条数见 `stats.hidden` |
 | `disabledRules` | `[]` | 规则 id 数组 |
 | `extraPhrases` | `{}` | `{ [ruleId]: { zh?: string[], en?: string[] } }`，用户自定义词表 |
 | `maxHits` | `500` | 返回列表上限（统计不受影响） |

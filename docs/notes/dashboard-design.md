@@ -183,7 +183,7 @@
 | 事件 | 处理 | 为什么 |
 |---|---|---|
 | `user/message` | 提取纯文本 → `scan()` → 存为 `pendingBefore` | 用户粘贴/发送的原文是「改写前」的天然候选 |
-| `tool/result`（`adw_scan`） | 读 `data.meta.value.result` 的 `ToolValue` → 生成 `point`；若有 `pendingBefore` 则配对成 `pairs` | 权威数据源，模型自查的结果 |
+| `tool/result`（`adw_scan`） | 读 `data.meta.adwScan` 的 `ToolValue`（工具 `presentationMeta`） → 生成 `point`；若有 `pendingBefore` 则配对成 `pairs` | 权威数据源，模型自查的结果 |
 | `command/done` | 用正则从 `/adw scan` 的固定输出中提取 `写作健康度 N/100 · 命中 N 处（高/中/低）` | 命令结果不进模型历史，但仍是有效测量 |
 | `assistant/message` | 对回复正文做有界扫描（≤20k 字符）→ `point`；`source: 'assistant'` | 模型没调工具时面板也要动，否则用户以为插件没生效 |
 | 其他所有事件 | 返回原 state 引用 | 零成本 |

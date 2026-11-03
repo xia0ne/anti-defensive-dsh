@@ -8,7 +8,7 @@
 
 [![license](https://img.shields.io/static/v1?label=license&message=MIT&color=3da639)](#许可证)
 [![dsh](https://img.shields.io/static/v1?label=dsh&message=0.2.1-rc.x&color=5b9bff)](docs/notes/dsh-plugin-api.md)
-[![tests](https://img.shields.io/static/v1?label=tests&message=62%20passing&color=2f9e63)](scripts/verify.mjs)
+[![tests](https://img.shields.io/static/v1?label=tests&message=79%20passing&color=2f9e63)](scripts/verify.mjs)
 [![upstream](https://img.shields.io/static/v1?label=upstream&message=Adkid-Zephyr%20%28MIT%29&color=8b93a1)](https://github.com/Adkid-Zephyr/anti-defensive-writing-Skill)
 
 </div>
@@ -94,7 +94,7 @@ Desktop profile 由 Electron 管理，CLI 装不进去 —— 详见 [DESIGN.md 
 ## 测试
 
 ```bash
-node scripts/verify.mjs   # 一键校验全部：62 项测试 + 同步检查 + 真实 DSH profile 组装探针
+node scripts/verify.mjs   # 一键校验全部：79 项测试 + 同步检查 + 真实 DSH profile 组装探针
 ```
 
 | 套件 | 数量 |

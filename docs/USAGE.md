@@ -42,7 +42,7 @@
 ```
 /adw scan docs/paper.md
 /adw scan docs/paper.md --section abstract
-/adw scan docs/paper.md --min-severity high
+/adw scan docs/paper.md --min-severity high   # 只显示 high；分数仍按全部命中计算
 ```
 
 输出长这样：
@@ -142,7 +142,7 @@ weightedPoints = Σ(严重度权重 × 章节权重)
 ## 五、开发者入口
 
 ```bash
-node scripts/verify.mjs        # 全部 62 项检查
+node scripts/verify.mjs        # 全部 79 项检查
 ```
 
 | 想改什么 | 改哪里 | 改完跑 |
